@@ -1,4 +1,5 @@
-const { Readable, Transform } = require("node:stream");
+const { promisesToStream } = require("./promises-to-stream");
+const { createTransformStream } = require("./transform-stream");
 
 const makeRequest = (msg, wait) =>
   new Promise((resolve) => {
@@ -19,72 +20,12 @@ const promises = [
   makeRequest("3rd promise", 2000),
 ];
 
-const promisesToStream = (promises) => {
-  const readStream = new Readable({
-    read() {},
-    destroy() {
-      console.log(
-        `promise stream destroyed, time elapsed: ${Date.now() - start}`
-      );
-    },
-  });
-  promises.forEach((promise) => {
-    // each promise pushes its results into the stream when it resolves
-    promise.then((result) => readStream.push(result));
-  });
+const promise$ = promisesToStream(promises).on("end", () =>
+  console.log(`promise stream destroyed, time elapsed: ${Date.now() - start}`)
+);
 
-  // when all promises have resolved, push null to signal the end of the stream
-  Promise.all(promises).then(() => readStream.push(null));
+const transform$ = createTransformStream(doWork, 2).on("finish", () =>
+  console.log("work complete")
+);
 
-  return readStream;
-};
-
-const createTransformStream = (transformFn, limit) => {
-  let pBuffer = [];
-
-  const startTransform = (chunk) =>
-    transformFn(chunk).then((result) => {
-      transform$.push(result);
-      return result;
-    });
-
-  const transform$ = new Transform({
-    async transform(chunk) {
-      if (pBuffer.length < limit) {
-        const workPromise = startTransform(chunk);
-        pBuffer.push(workPromise);
-      } else {
-        await Promise.race(pBuffer);
-        const workPromise = startTransform(chunk);
-
-        let inserted = false;
-        pBuffer = pBuffer.map((p) =>
-          p.then(() => {
-            if (!inserted) {
-              inserted = true;
-              return workPromise;
-            }
-            return null;
-          })
-        );
-      }
-    },
-
-    async final() {
-      // we don't have to worry about writableLength because just having this method changes the stream's behavior
-      // and keeps the stream open until the interanl buffer is empty
-      await Promise.all(pBuffer); // wait for all work to complete
-    },
-  });
-
-  return transform$;
-};
-
-const doWork$ = createTransformStream(doWork, 2);
-
-const promises$ = promisesToStream(promises);
-
-promises$
-  .pipe(doWork$)
-  .on("finish", () => console.log("work complete"))
-  .pipe(process.stdout);
+promise$.pipe(transform$).pipe(process.stdout);
