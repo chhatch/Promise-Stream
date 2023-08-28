@@ -1,5 +1,6 @@
 const { Readable, Transform } = require("node:stream");
 
+/** apply async transform function to stream */
 const createTransformStream = (transformFn, limit) => {
   let pBuffer = [];
 
@@ -11,15 +12,15 @@ const createTransformStream = (transformFn, limit) => {
     });
 
   const transform$ = new Transform({
-    async transform(chunk) {
+    async transform(chunk, encoding, callback) {
       // if the promise buffer isn't full, start the transform immediately
       if (pBuffer.length < limit) {
-        const workPromise = startTransform(chunk);
-        pBuffer.push(workPromise);
+        const transformPromise = startTransform(chunk);
+        pBuffer.push(transformPromise);
       } else {
         // if the buffer is full, wait for a promise to resolve
         await Promise.race(pBuffer);
-        const workPromise = startTransform(chunk);
+        const transformPromise = startTransform(chunk);
 
         // there's no way for us to tell which promise just resolved, so we'll map over all of them
         let inserted = false;
@@ -28,18 +29,20 @@ const createTransformStream = (transformFn, limit) => {
           p.then((r) => {
             if (!inserted) {
               inserted = true;
-              return workPromise;
+              return transformPromise;
             }
             return r;
           })
         );
       }
+      callback();
     },
 
-    async final() {
+    async final(callback) {
       // we don't have to worry about writableLength because just having this method changes the stream's behavior
       // and keeps the stream open until the interanl buffer is empty
       await Promise.all(pBuffer); // wait for all work to complete
+      callback();
     },
   });
 
