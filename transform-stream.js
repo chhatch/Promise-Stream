@@ -9,7 +9,6 @@ const createTransformStream = (transformFn, limit) => {
     // run the transform and push the result into the stream
     transformFn(chunk).then((result) => {
       transform$.push(result);
-      return result;
     });
 
   const transform$ = new Transform({
@@ -18,7 +17,9 @@ const createTransformStream = (transformFn, limit) => {
       if (pBuffer.length < limit) {
         const transformPromise = startTransform(chunk);
         // resolving with the index helps us update the buffer
-        pBuffer.push(transformPromise.then(() => initialIndex));
+        ((index) => pBuffer.push(transformPromise.then(() => index)))(
+          initialIndex
+        );
         initialIndex++;
       } else {
         // if the buffer is full, wait for a promise to resolve
