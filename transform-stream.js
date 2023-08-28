@@ -2,7 +2,8 @@ const { Readable, Transform } = require("node:stream");
 
 /** apply async transform function to stream */
 const createTransformStream = (transformFn, limit) => {
-  let pBuffer = [];
+  const pBuffer = [];
+  let initialIndex = 0;
 
   const startTransform = (chunk) =>
     // run the transform and push the result into the stream
@@ -16,24 +17,16 @@ const createTransformStream = (transformFn, limit) => {
       // if the promise buffer isn't full, start the transform immediately
       if (pBuffer.length < limit) {
         const transformPromise = startTransform(chunk);
-        pBuffer.push(transformPromise);
+        // resolving with the index helps us update the buffer
+        pBuffer.push(transformPromise.then(() => initialIndex));
+        initialIndex++;
       } else {
         // if the buffer is full, wait for a promise to resolve
-        await Promise.race(pBuffer);
+        const insertIndex = await Promise.race(pBuffer);
         const transformPromise = startTransform(chunk);
 
-        // there's no way for us to tell which promise just resolved, so we'll map over all of them
-        let inserted = false;
-        pBuffer = pBuffer.map((p) =>
-          // for at least one of them this will resolve immediately
-          p.then((r) => {
-            if (!inserted) {
-              inserted = true;
-              return transformPromise;
-            }
-            return r;
-          })
-        );
+        // replace the promise that just resolved
+        pBuffer[insertIndex] = transformPromise.then(() => insertIndex);
       }
       callback();
     },
